@@ -1,0 +1,144 @@
+#app.py Snippet
+
+# app.py
+import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout
+
+# Set theme
+plt.style.use('ggplot')
+sns.set_theme()
+
+st.title("🌿 Hybrid Species Analysis: Capsicum & Chilli")
+
+# Upload files
+capsicum_file = st.file_uploader("Upload Capsicum Dataset CSV", type=["csv"])
+chilli_file = st.file_uploader("Upload Chilli Dataset CSV", type=["csv"])
+
+if capsicum_file and chilli_file:
+    def load_data(file):
+        df = pd.read_csv(file)
+        df.fillna(method='ffill', inplace=True)
+        return df
+
+    capsicum_df = load_data(capsicum_file)
+    chilli_df = load_data(chilli_file)
+
+    important_features = ['HeatLevel (SHU)', 'Yield (kg/plant)', 'DiseaseResistance', 'DroughtTolerance']
+    scaler = MinMaxScaler()
+
+    def normalize(df):
+        df_copy = df.copy()
+        for feat in important_features:
+            if feat in df_copy.columns and df_copy[feat].dtype == 'object':
+                df_copy[feat] = df_copy[feat].map({'Low': 1, 'Medium': 2, 'High': 3})
+        df_copy[important_features] = scaler.fit_transform(df_copy[important_features].astype(float))
+        return df_copy
+
+    capsicum_normalized = normalize(capsicum_df)
+    chilli_normalized = normalize(chilli_df)
+
+    if st.button("📊 Correlation Heatmap"):
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.heatmap(capsicum_normalized[important_features].corr(), annot=True, cmap="coolwarm", ax=ax)
+        st.pyplot(fig)
+
+    if st.button("📈 Pairplot Visualization"):
+        st.pyplot(sns.pairplot(capsicum_normalized[important_features]).fig)
+
+    if st.button("📉 Hybrid Score Distribution"):
+        for df, name in zip([capsicum_normalized, chilli_normalized], ["Capsicum", "Chilli"]):
+            df['HybridScore'] = df[important_features].sum(axis=1)
+            fig, ax = plt.subplots(figsize=(10, 6))
+            sns.histplot(df['HybridScore'], bins=20, kde=True, ax=ax)
+            ax.set_title(f'{name} Hybrid Score Distribution')
+            st.pyplot(fig)
+
+    if st.button("🏆 Best Hybrid Species"):
+        def find_best(df):
+            df['HybridScore'] = df[important_features].sum(axis=1)
+            return df.loc[df['HybridScore'].idxmax()]
+
+        best_capsicum = find_best(capsicum_normalized)
+        best_chilli = find_best(chilli_normalized)
+
+        st.write(f"Best Capsicum SpeciesID: {best_capsicum['SpeciesID']}, Score: {best_capsicum['HybridScore']:.2f}")
+        st.write(f"Best Chilli SpeciesID: {best_chilli['SpeciesID']}, Score: {best_chilli['HybridScore']:.2f}")
+
+    if st.button("🔍 Species Clustering"):
+        def plot_clusters(df):
+            kmeans = KMeans(n_clusters=3, random_state=42)
+            df['Cluster'] = kmeans.fit_predict(df[important_features])
+            fig, ax = plt.subplots(figsize=(10, 6))
+            sns.scatterplot(data=df, x='HeatLevel (SHU)', y='Yield (kg/plant)', hue='Cluster', palette='viridis', ax=ax)
+            ax.set_title("Species Clustering")
+            return fig
+
+        st.pyplot(plot_clusters(capsicum_normalized.copy()))
+        st.pyplot(plot_clusters(chilli_normalized.copy()))
+
+    if st.button("🧬 PCA Analysis"):
+        def plot_pca(df):
+            df = df.copy()
+            df['HybridScore'] = df[important_features].sum(axis=1)
+            pca = PCA(n_components=2)
+            components = pca.fit_transform(df[important_features])
+            pca_df = pd.DataFrame(components, columns=['PC1', 'PC2'])
+            pca_df['HybridScore'] = df['HybridScore']
+            fig, ax = plt.subplots(figsize=(10, 6))
+            sns.scatterplot(data=pca_df, x='PC1', y='PC2', hue='HybridScore', palette='coolwarm', ax=ax)
+            ax.set_title("PCA Plot for Species")
+            return fig
+
+        st.pyplot(plot_pca(capsicum_normalized.copy()))
+        st.pyplot(plot_pca(chilli_normalized.copy()))
+
+    if st.button("🤖 Predict Hybrid Parameters using Deep Learning"):
+        st.subheader("Deep Learning Predictions")
+
+        # Get best species only
+        capsicum_best = capsicum_normalized.loc[capsicum_normalized[important_features].sum(axis=1).idxmax()]
+        chilli_best = chilli_normalized.loc[chilli_normalized[important_features].sum(axis=1).idxmax()]
+
+        combined_best = pd.DataFrame([capsicum_best, chilli_best])
+        X_best = combined_best[important_features].values
+        y_best = combined_best[important_features].values
+
+        def build_model(input_dim):
+            model = Sequential([
+                Dense(64, activation='relu', input_dim=input_dim),
+                Dropout(0.3),
+                Dense(32, activation='relu'),
+                Dropout(0.2),
+                Dense(len(important_features), activation='linear')
+            ])
+            model.compile(optimizer='adam', loss='mse')
+            return model
+
+        model = build_model(X_best.shape[1])
+        progress = st.progress(0)
+        status = st.empty()
+
+        for epoch in range(100):
+            hist = model.fit(X_best, y_best, epochs=1, batch_size=2, verbose=0)
+            loss = hist.history['loss'][0]
+            progress.progress((epoch + 1) / 100)
+            status.text(f"Epoch {epoch+1}/100 - Loss: {loss:.5f}")
+
+        predicted = model.predict(X_best)
+        predicted_df = pd.DataFrame(predicted, columns=important_features)
+        st.success("✅ Deep Learning Training Completed")
+        st.write("Predicted Parameters for Best Hybrid Crops:")
+        st.dataframe(predicted_df)
+
+        # Save report
+        report = combined_best.copy()
+        report.to_csv("best_hybrid_species_report.csv", index=False)
+        st.success("📄 Report saved as `best_hybrid_species_report.csv`")
